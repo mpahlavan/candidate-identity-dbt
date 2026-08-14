@@ -1,0 +1,21 @@
+packages:
+  # Core utility macros. Required by this project for:
+  #   - dbt_utils.generate_surrogate_key()  -> stable surrogate keys on dim_candidate
+  #   - dbt_utils.equal_rowcount()          -> asserts int_identity_unioned equals
+  #                                            the sum of its three staging inputs
+  #   - dbt_utils.unique_combination_of_columns()
+  #                                         -> the (candidate_id, attribute_name)
+  #                                            grain test dim_candidate_attributes lacks
+  - package: dbt-labs/dbt_utils
+    version: [">=1.1.0", "<2.0.0"]
+
+  # Richer test suite. Lets email validation become a declarative
+  # expect_column_values_to_match_regex test instead of the hand-rolled
+  # tests/generic/test_email_format.sql.
+  - package: metaplane/dbt_expectations
+    version: [">=0.10.0", "<0.11.0"]
+
+  # Dev-only: scaffolds staging models and schema YAML from sources.
+  # Useful for generating the staging .yml this project is still missing.
+  # - package: dbt-labs/codegen
+  #   version: [">=0.12.0", "<0.14.0"]

@@ -1,0 +1,24 @@
+# dbt artifacts
+target/
+dbt_packages/
+logs/
+
+# Note: package-lock.yml is intentionally NOT ignored — it pins exact
+# package versions and should be committed.
+
+# Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+
+# Secrets — never commit these
+.env
+*.p8
+*.pem
+
+# dbt local user config
+.user.yml
+
+# macOS
+.DS_Store

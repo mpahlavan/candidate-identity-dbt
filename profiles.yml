@@ -1,0 +1,40 @@
+# Project-local dbt profile. dbt checks the current working directory before
+# ~/.dbt/, so running `dbt build` from the project root picks this up.
+#
+# Every secret is read from the environment — nothing sensitive lives in this
+# file, so it is safe to commit. Copy .env.example to .env, fill it in, then:
+#   set -a && source .env && set +a
+#
+# Verify the connection before building:
+#   dbt debug
+
+jobylon:
+  target: dev
+  outputs:
+    dev:
+      type: snowflake
+
+      # From your Snowflake trial. In Snowsight the account identifier is under
+      # the account menu (bottom left) -> Account -> View account details.
+      # Format is usually ORGNAME-ACCOUNTNAME, e.g. ABCDEFG-HI12345.
+      account: "{{ env_var('SNOWFLAKE_ACCOUNT') }}"
+
+      user: "{{ env_var('SNOWFLAKE_USER') }}"
+      password: "{{ env_var('SNOWFLAKE_PASSWORD') }}"
+
+      # For SSO instead of a password, comment out `password` above and use:
+      #   authenticator: externalbrowser
+      # For key-pair auth:
+      #   private_key_path: "{{ env_var('SNOWFLAKE_PRIVATE_KEY_PATH') }}"
+
+      # Trial defaults — a new trial account gives you ACCOUNTADMIN and COMPUTE_WH.
+      role: "{{ env_var('SNOWFLAKE_ROLE', 'ACCOUNTADMIN') }}"
+      warehouse: "{{ env_var('SNOWFLAKE_WAREHOUSE', 'COMPUTE_WH') }}"
+
+      # Where dbt WRITES. Distinct from the `raw` database the models READ from,
+      # which is declared in models/staging/_sources.yml.
+      database: "{{ env_var('SNOWFLAKE_DATABASE', 'ANALYTICS') }}"
+      schema: "{{ env_var('SNOWFLAKE_SCHEMA', 'DEV') }}"
+
+      threads: 4
+      client_session_keep_alive: false

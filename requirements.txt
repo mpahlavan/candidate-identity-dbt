@@ -1,0 +1,19 @@
+# Jobylon DataForge — Python dependencies
+#
+# Install into a virtual environment:
+#   python -m venv .venv && source .venv/bin/activate
+#   pip install -r requirements.txt
+
+# --- Core -------------------------------------------------------------------
+dbt-core>=1.7,<2.0
+
+# --- Warehouse adapter ------------------------------------------------------
+# Snowflake, and not interchangeable: the models use LATERAL FLATTEN
+# (dim_candidate_attributes.sql) and variant path access
+# (stg_srv_applicants.sql), neither of which ports to other warehouses.
+dbt-snowflake>=1.7,<2.0
+
+# --- Development ------------------------------------------------------------
+# Uncomment to lint and format models:
+# sqlfluff>=3.0
+# sqlfluff-templater-dbt>=3.0

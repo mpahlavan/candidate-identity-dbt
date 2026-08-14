@@ -1,0 +1,26 @@
+name: 'jobylon_identity'
+version: '1.0.0'
+config-version: 2
+
+profile: 'jobylon'
+
+model-paths: ["models"]
+analysis-paths: ["analyses"]
+test-paths: ["tests"]
+macro-paths: ["macros"]
+snapshot-paths: ["snapshots"]
+
+vars:
+  tenant_id: null   # Set at runtime: dbt run --vars '{"tenant_id": 123}'
+
+models:
+  jobylon_identity:
+    staging:
+      +materialized: view
+      +schema: staging
+    intermediate:
+      +materialized: ephemeral
+      +schema: intermediate
+    marts:
+      +materialized: table
+      +schema: marts

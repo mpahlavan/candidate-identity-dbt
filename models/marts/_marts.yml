@@ -1,0 +1,44 @@
+version: 2
+
+models:
+  - name: dim_candidate
+    description: >
+      The unified candidate identity hub. One row per candidate.
+      Serves as the center of the star schema for all three products.
+      Materialized as a table with indexes on key filter columns.
+    columns:
+      - name: candidate_id
+        tests: [unique, not_null]
+      - name: customer_id
+        tests: [not_null]
+      - name: email
+        tests: [not_null]
+      - name: is_in_crm
+        tests: [not_null]
+      - name: is_in_ats
+        tests: [not_null]
+      - name: is_in_srv
+        tests: [not_null]
+
+  - name: dim_candidate_attributes
+    description: >
+      Key-value store for extensible candidate attributes.
+      Designed to absorb 50+ future filterable fields without
+      schema changes to the identity hub.
+    columns:
+      - name: candidate_id
+        tests: [not_null]
+      - name: attribute_name
+        tests: [not_null]
+      - name: attribute_value
+        tests: [not_null]
+
+  - name: fct_candidate_presence
+    description: >
+      Pre-aggregated system presence for fast overlap and
+      cross-system filtering queries.
+    columns:
+      - name: candidate_id
+        tests: [unique, not_null]
+      - name: customer_id
+        tests: [not_null]
