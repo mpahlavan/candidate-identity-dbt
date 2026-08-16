@@ -93,7 +93,7 @@ The adapter is **not** swappable. `LATERAL FLATTEN`, `variant:path` access, `IS_
 `README.md` tracks fixed and open issues; keep it in sync when changing model behaviour, since it documents claims about how the models work.
 
 - **Issue #8 is open by the repo owner's decision.** Attribute *shape* is normalized (`'Hiring manager'` -> `hiring_manager`) but *vocabulary* is not: CRM/ATS emit `department_name` where Survey emits `department`. Closing it needs a `(source_system, raw_key) -> canonical_name` mapping. A seed was built and deliberately reverted — do not reintroduce one without asking.
-- **Still empty:** the three `analyses/` queries (a numbered requirement in the assignment brief), `macros/dedup_helpers.sql`, and `snapshots/dim_candidate_snapshot.sql`.
+- **Every deliverable is written.** 10 models, 3 analyses, 1 snapshot, 68 tests, 2 unit tests. `macros/dedup_helpers.sql` was deleted rather than filled — the dedup windows differ only by column name and a macro would hide the explicit frame `int_identity_deduped` depends on. Do not recreate it.
 - **dbt 1.12 deprecations outstanding:** `freshness` should move under `config:` in `_sources.yml`, and generic-test arguments (`accepted_values`' `values:`, `relationships`' `to:`/`field:`) should nest under `arguments:`.
 - **Two dbt versions are present on this machine.** The venv has 1.12.2; the IDE extension runs 1.8.10. Package version constraints can pass in one and fail in the other.
 

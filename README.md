@@ -233,8 +233,7 @@ dbt build --vars '{"tenant_id": 123}'
 ├── requirements.txt                  # dbt-core + dbt-snowflake
 ├── .env.example                      # credential template (copy to .env)
 ├── macros/
-│   ├── tenant_isolation.sql          # tenant_filter() — Pattern A
-│   └── dedup_helpers.sql             # reusable dedup patterns
+│   └── tenant_isolation.sql          # tenant_filter() — Pattern A
 ├── models/
 │   ├── staging/       _sources.yml + 4 staging models
 │   ├── intermediate/  _intermediate.yml + union, dedup, bridge
@@ -248,13 +247,19 @@ dbt build --vars '{"tenant_id": 123}'
 
 ## Current status
 
-All models, the source declarations, the tenant macro, and the test suite are written, and `dbt parse` succeeds. The project has **not been run against a warehouse**, and the issues below are outstanding.
+Every deliverable is written: 10 models, 3 analyses, 1 snapshot, 68 tests and 2 unit tests. `dbt parse` succeeds and all selectors resolve.
 
-Required deliverables still empty (0 bytes):
+The project has **not been run against a warehouse** — `raw.public` has not been loaded into the target Snowflake account — so everything is correct by construction and by parse, never by execution.
 
-- **`analyses/`** — the brief lists "add 2–3 example queries" as its own numbered requirement. Three files are scaffolded and none are written: cross-system candidate search, system overlap analysis, and survey responses segmented by ATS.
-- **`macros/dedup_helpers.sql`** — the dedup windows are written inline in `int_identity_deduped.sql` and belong here.
-- **`snapshots/dim_candidate_snapshot.sql`** — SCD Type 2 history. Should snapshot `dim_candidate`, not the ephemeral intermediate model.
+The three analyses answer the questions this README opens with:
+
+| Analysis | Question |
+| --- | --- |
+| `example_query_1_cross_system_search` | Find candidates by department regardless of which product holds the field. |
+| `example_query_2_overlap_analysis` | Which candidates exist in more than one system, and how many. |
+| `example_query_3_survey_by_ats` | Survey response rate among ATS candidates, split by ATS vendor. |
+
+`macros/dedup_helpers.sql` was removed rather than filled. The six dedup windows differ only by column name, and factoring them into a macro would have hidden the explicit frame that model depends on.
 
 ---
 
