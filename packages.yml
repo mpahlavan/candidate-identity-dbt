@@ -9,11 +9,10 @@ packages:
   - package: dbt-labs/dbt_utils
     version: [">=1.1.0", "<2.0.0"]
 
-  # Richer test suite. Lets email validation become a declarative
-  # expect_column_values_to_match_regex test instead of the hand-rolled
-  # tests/generic/test_email_format.sql.
-  - package: metaplane/dbt_expectations
-    version: [">=0.10.0", "<0.11.0"]
+  # Deliberately NOT installed: metaplane/dbt_expectations. Nothing in the
+  # project referenced it, and it pulls in dbt_date, which pins dbt >=1.10.5 and
+  # so breaks tooling running an older dbt. The hand-rolled
+  # tests/generic/test_email_format.sql covers the one case it was added for.
 
   # Dev-only: scaffolds staging models and schema YAML from sources.
   # Useful for generating the staging .yml this project is still missing.

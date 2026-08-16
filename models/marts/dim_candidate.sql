@@ -1,14 +1,12 @@
 -- models/marts/dim_candidate.sql
+-- Snowflake has no indexes; the `indexes` config is silently ignored by
+-- dbt-snowflake, so it gave the appearance of tuning while doing nothing.
+-- Clustering is the Snowflake equivalent. customer_id leads the key because
+-- every tenant-scoped query filters on it first.
 {{
     config(
         materialized = 'table',
-        indexes = [
-            {'columns': ['candidate_sk'], 'unique': True},
-            {'columns': ['email']},
-            {'columns': ['customer_id']},
-            {'columns': ['hiring_manager']},
-            {'columns': ['department_name']}
-        ]
+        cluster_by = ['customer_id', 'candidate_sk']
     )
 }}
 

@@ -22,16 +22,43 @@ models:
 
   - name: dim_candidate_attributes
     description: >
-      Key-value store for extensible candidate attributes.
-      Designed to absorb 50+ future filterable fields without
-      schema changes to the identity hub.
+      Key-value store for extensible candidate attributes, designed to absorb
+      50+ future filterable fields without schema changes to the identity hub.
+
+      Deliberately multi-valued: the grain is one row per
+      (candidate_sk, source_system, attribute_name, attribute_value), so a
+      candidate with two recruiters keeps both, and two systems may disagree
+      about an attribute without either value being lost.
+    tests:
+      - dbt_utils.unique_combination_of_columns:
+          combination_of_columns:
+            - candidate_sk
+            - source_system
+            - attribute_name
+            - attribute_value
     columns:
-      - name: candidate_id
+      - name: candidate_sk
+        description: Joins dim_candidate. Attributes are keyed on identity, not native ids.
+        tests:
+          - not_null
+          - relationships:
+              to: ref('dim_candidate')
+              field: candidate_sk
+      - name: customer_id
+        description: Present so tenant_filter() applies to this mart as it does to the others.
         tests: [not_null]
       - name: attribute_name
+        description: >
+          Lowercased, underscore-separated form of each system's own key.
+          Vocabulary is NOT yet reconciled across systems — see open issue #8.
         tests: [not_null]
       - name: attribute_value
         tests: [not_null]
+      - name: source_system
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['crm', 'ats', 'srv']
 
   - name: fct_candidate_presence
     description: >

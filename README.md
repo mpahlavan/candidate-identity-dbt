@@ -3,9 +3,9 @@
 A dbt project that resolves candidate identity across three separate Jobylon products — CRM, ATS, and Survey — into a single analytics surface.
 
 > [!IMPORTANT]
-> **Status: identity resolution is fixed; the attributes table is still being rebuilt. The project has not yet been run against a warehouse.**
+> **Status: identity resolution and the attributes table are rebuilt. The project has not yet been run against a warehouse.**
 >
-> Identity is now a minted surrogate over `(customer_id, email)` rather than the per-system `candidate_id`, which resolves the cross-system collision and the cross-tenant merge. `dbt parse` and the unit tests register cleanly, but no model has executed against Snowflake — the `raw` database has not been loaded. Remaining work is tracked under [Remaining](#remaining).
+> Identity is now a minted surrogate over `(customer_id, email)` rather than the per-system `candidate_id`, which resolves the cross-system collision and the cross-tenant merge. `dbt parse` and the unit tests register cleanly, but no model has executed against Snowflake — the `raw` database has not been loaded. One issue is deliberately left open — see [Remaining](#remaining).
 
 ---
 
@@ -125,8 +125,10 @@ WHERE attribute_name = 'country'
 
 Adding a new attribute becomes an insert, not a migration. The hub stays narrow and fast.
 
+The table is keyed on `candidate_sk`, so it joins `dim_candidate` directly, and carries `customer_id` so `tenant_filter()` applies to it like every other mart. Its grain is deliberately multi-valued — one row per `(candidate_sk, source_system, attribute_name, attribute_value)` — so a candidate with two recruiters keeps both, and two systems may disagree about an attribute without either value being lost.
+
 > [!WARNING]
-> Two defects make this table unable to do the cross-system filtering it exists for: attribute names are not normalized across systems ([issue 7](#8-the-attribute-namespace-doesnt-line-up)), and `attribute_value` mixes VARIANT arrays with scalars, so the query above returns `["Sweden"]` for survey rows and `"Sweden"` for the rest ([issue 8](#9-attribute_value-mixes-arrays-and-scalars)). It also carries no `customer_id` at all ([issue 6](#7-dim_candidate_attributes-has-no-customer_id)).
+> Attribute **names** are not yet reconciled across systems ([issue 8](#8-the-attribute-namespace-doesnt-line-up)). Key shape is normalized — case and spacing, so `'Hiring manager'` becomes `hiring_manager` — but vocabulary is not: CRM and ATS say `department_name` where Survey says `department`. The query above therefore still needs to know which system it is asking about.
 
 ### System presence and the bitmask
 
@@ -136,7 +138,7 @@ These flags are only as trustworthy as the identity key, which is why the surrog
 
 ## Tenant isolation
 
-`dim_candidate` and `fct_candidate_presence` carry `customer_id`, and queries are scoped through the `tenant_filter()` macro:
+Every mart carries `customer_id`, and queries are scoped through the `tenant_filter()` macro:
 
 ```sql
 SELECT * FROM {{ ref('dim_candidate') }}
@@ -160,9 +162,7 @@ With `tenant_id` unset the macro emits nothing, so unscoped builds and CI runs w
 Pattern A is what this project implements. **Pattern B is the production upgrade path**: a Snowflake secure view filters on the session's tenant, so the application never writes the predicate itself and can't forget to.
 
 > [!WARNING]
-> `dim_candidate_attributes` still has no `customer_id`, so the macro cannot be applied to it at all — see [issue 7](#7-dim_candidate_attributes-has-no-customer_id). Every other mart is scopeable.
->
-> Worth noting why the macro alone was never sufficient: it runs *downstream* of the dedup, so when the partition could span tenants the hub row was already corrupted before any filter ran. The fix belongs in the key, not the filter.
+> Worth noting why the macro alone was never sufficient. It runs *downstream* of the dedup, so while the partition could span tenants the hub row was already corrupted before any filter ran — filtering on the winning `customer_id` would happily serve another tenant's department and recruiter. The fix belongs in the key, not the filter, which is why `customer_id` is an input to `candidate_sk`.
 
 ## Testing
 
@@ -273,31 +273,21 @@ Required deliverables still empty (0 bytes):
 | 10  | `assert_email_dedup_integrity` grouped emails globally                       | grouped by `(customer_id, email)`                                                                                |
 | 11  | `stg_ats_candidates` bypassed `stg_ats_jobs`                                 | joins `ref('stg_ats_jobs')`, so one cleaning path serves every consumer                                          |
 | —   | staging layer had no schema file                                             | `_staging.yml` documents all four models and adds key, FK and email-format tests                                  |
+| 7   | `dim_candidate_attributes` had no `customer_id`, so could not be tenant-scoped | rebuilt on `candidate_sk` + `customer_id`, joined through the bridge; `tenant_filter()` now applies                |
+| 9   | `attribute_value` mixed VARIANT arrays with scalars                          | double `FLATTEN` emits one row per array element, cast to `VARCHAR`; `IS_ARRAY` guard keeps scalar tags working    |
+| 12  | `indexes` config silently ignored by dbt-snowflake                           | replaced with `cluster_by` on both marts, `customer_id` leading; grain now guarded by `unique_combination_of_columns` |
+| —   | `dbt_expectations` installed but never referenced                            | dropped; its transitive `dbt_date` pins dbt >=1.10.5 and broke tooling on older dbt                               |
 
 > [!NOTE]
 > These are correct by construction and by `dbt parse`, **not by execution** — no model has yet run against a warehouse.
 
 ## Remaining
 
-### 7. `dim_candidate_attributes` has no `customer_id`
-
-It selects `candidate_id`, `attribute_name`, `attribute_value`, `source_system` and nothing else, so `tenant_filter()` cannot be applied to it and `_marts.yml` does not test for it. The table meant to absorb 50+ future filterable fields is the one mart with no tenant scoping at all.
-
 ### 8. The attribute namespace doesn't line up
 
-The CRM and ATS branches emit `attribute_name = 'department_name'`. The survey branch flattens raw JSON keys, emitting `'Department'`, `'Hiring manager'`, `'Recruiter'`. So `WHERE attribute_name = 'department_name'` silently misses every survey row, and `'Department'` misses every CRM and ATS row — the table cannot cross-system filter on even one field.
+`dim_candidate_attributes` normalizes the *shape* of each key — lowercased, spaces to underscores, so `'Hiring manager'` becomes `hiring_manager` — but not the *vocabulary*. CRM and ATS emit `department_name` while Survey emits `department`; ATS emits `recruiters` where CRM emits `recruiter`. A single predicate still cannot match every system, which is the one thing this table exists to enable.
 
-**Fix:** an explicit key-normalization mapping, ideally a seed or macro, so adding attribute #51 doesn't mean editing SQL.
-
-### 9. `attribute_value` mixes arrays and scalars
-
-`LATERAL FLATTEN(input => tags)` over `{"Department": ["Sales"]}` yields `f.value = ["Sales"]` — a VARIANT array. The CRM and ATS branches emit plain VARCHAR. Unioned, the column becomes VARIANT with inconsistent shapes.
-
-**Fix:** either cast `f.value[0]::VARCHAR`, or flatten twice and emit one row per array element — the latter is better, since a candidate with two recruiters keeps both.
-
-### 12. The `indexes` config is inert on Snowflake
-
-Both `dim_candidate` and `dim_candidate_attributes` declare it; dbt-snowflake ignores it without error. Clustering keys are the Snowflake equivalent. This also removes the only nominal guard on `dim_candidate_attributes`' `(candidate_id, attribute_name)` grain, which both the CRM and ATS branches violate by emitting `department_name` — `dbt_utils.unique_combination_of_columns` would catch it.
+**Fix:** an explicit `(source_system, raw_key) -> canonical_name` mapping. A seed keeps new fields to a CSV row; a macro or `CASE` block works identically at runtime but means a SQL edit per field. Left open deliberately.
 
 ---
 
