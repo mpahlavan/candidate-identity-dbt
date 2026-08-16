@@ -3,9 +3,9 @@
 A dbt project that resolves candidate identity across three separate Jobylon products — CRM, ATS, and Survey — into a single analytics surface.
 
 > [!IMPORTANT]
-> **Status: the modelling layer is complete and documented, but the identity key is wrong and the project has not been run against a warehouse.**
+> **Status: identity resolution is fixed; the attributes table is still being rebuilt. The project has not yet been run against a warehouse.**
 >
-> The dedup partitions on `candidate_id`, which the assignment defines as a *per-system* primary key. As written, the hub merges unrelated people and leaks attributes across tenants. See [Tier 1 issues](#tier-1--correctness-blockers) before reading the design below as a description of working software.
+> Identity is now a minted surrogate over `(customer_id, email)` rather than the per-system `candidate_id`, which resolves the cross-system collision and the cross-tenant merge. `dbt parse` and the unit tests register cleanly, but no model has executed against Snowflake — the `raw` database has not been loaded. Remaining work is tracked under [Remaining](#remaining).
 
 ---
 
@@ -17,7 +17,7 @@ Each product stores its own candidate records. The same person can appear in all
 - What share of ATS candidates have also responded to a survey?
 - Filter all candidates by department, recruiter, or hiring manager — regardless of which product holds that field.
 
-On top of that, the warehouse is multi-tenant: every customer's data sits in shared tables, and no query may ever leak across tenants. **This requirement is currently not met** — see [issue 2](#2-the-dedup-merges-across-tenants).
+On top of that, the warehouse is multi-tenant: every customer's data sits in shared tables, and no query may ever leak across tenants. This is enforced structurally, by making `customer_id` part of the identity key — see [below](#identity-resolution-what-the-key-must-be).
 
 ## What this builds
 
@@ -82,13 +82,17 @@ The assignment's Appendix A declares `candidate_id: int (primary key)` **separat
 The correct identity key is therefore a minted surrogate:
 
 ```sql
-{{ dbt_utils.generate_surrogate_key(['customer_id', "lower(trim(email))"]) }} AS candidate_sk
+{{ dbt_utils.generate_surrogate_key([
+    'customer_id',
+    "coalesce(email, source_system || ':' || source_candidate_id::varchar)"
+]) }} AS candidate_sk
 ```
 
 `customer_id` belongs in the key because the warehouse is multi-tenant: the same email under two customers is two distinct candidate records, not one. Each system's native `candidate_id` is then an *attribute*, preserved per-system in `int_candidate_system_bridge`.
 
-> [!WARNING]
-> The code does not do this yet. `int_identity_deduped` still partitions on the raw `candidate_id`, which is [issue 1](#1-candidate_id-is-not-a-shared-key) and the root cause of several others.
+The `coalesce` is load-bearing: `generate_surrogate_key` renders NULL as a literal string, so without a fallback every candidate lacking an email would hash identically and collapse into a single person. Falling back to the native per-system id keeps them distinct. Email arrives already lowercased and trimmed from the staging layer.
+
+Because `customer_id` is an input to the key, a partition can never span tenants. That is what prevents one customer's department and recruiter landing on another customer's hub row — a guarantee the `tenant_filter()` macro cannot provide on its own, since it runs downstream of the dedup.
 
 ## Models
 
@@ -105,8 +109,9 @@ The correct identity key is therefore a minted surrogate:
 
 When two systems disagree on a field, the most recent non-null value should win — per field, not per row. A candidate whose ATS record is newer but has no phone number should still keep the phone number from their older CRM record. The intent is expressed with `FIRST_VALUE(... IGNORE NULLS)` windows partitioned by the identity key and ordered by `source_timestamp DESC`.
 
-> [!WARNING]
-> **This currently computes nothing.** Every `FIRST_VALUE` window is missing an explicit frame, so all six are dead code and the output is equivalent to a plain `QUALIFY ROW_NUMBER() = 1`. It fails silently — no error, just quietly wrong values. See [issue 4](#4-most-recent-non-null-is-dead-code).
+Each window carries an explicit `ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING` frame. This is not decoration: `FIRST_VALUE` defaults to a frame ending at the current row, which — combined with keeping the first row of the same ordering — makes every window see only its own row and stop coalescing entirely. That failure mode is silent, so two tests guard it: a unit test whose newest row is deliberately NULL in fields an older row fills, and `assert_dedup_preserves_non_null`, which asserts on real data that no field is NULL in the hub when any system supplied a value.
+
+`email` and `customer_id` need no windowing, since both are inputs to the key and therefore constant within a partition.
 
 ### Extensibility: the attributes table
 
@@ -127,7 +132,7 @@ Adding a new attribute becomes an insert, not a migration. The hub stays narrow 
 
 `fct_candidate_presence` encodes presence as `1=crm, 2=ats, 4=srv`, so overlap questions become integer filters instead of three-way boolean logic — `system_bitmask = 3` is exactly "in CRM and ATS, not in Survey".
 
-Note that these flags are only as trustworthy as the identity key. While [issue 1](#1-candidate_id-is-not-a-shared-key) stands, the bitmask reports near-total cross-system overlap that is purely an artifact of ID ranges coinciding.
+These flags are only as trustworthy as the identity key, which is why the surrogate matters: on the per-system `candidate_id` the bitmask reported near-total overlap that was purely an artifact of ID ranges coinciding.
 
 ## Tenant isolation
 
@@ -154,8 +159,10 @@ With `tenant_id` unset the macro emits nothing, so unscoped builds and CI runs w
 
 Pattern A is what this project implements. **Pattern B is the production upgrade path**: a Snowflake secure view filters on the session's tenant, so the application never writes the predicate itself and can't forget to.
 
-> [!CAUTION]
-> The macro cannot deliver isolation on its own, because it runs *downstream* of where tenants are merged. `int_identity_deduped` partitions without `customer_id`, so a single hub row can already carry one customer's `customer_id` next to another customer's department and recruiter. Filtering that row by `customer_id` then serves the other tenant's values. See [issue 2](#2-the-dedup-merges-across-tenants). `dim_candidate_attributes` additionally has no `customer_id` to filter on at all.
+> [!WARNING]
+> `dim_candidate_attributes` still has no `customer_id`, so the macro cannot be applied to it at all — see [issue 7](#7-dim_candidate_attributes-has-no-customer_id). Every other mart is scopeable.
+>
+> Worth noting why the macro alone was never sufficient: it runs *downstream* of the dedup, so when the partition could span tenants the hub row was already corrupted before any filter ran. The fix belongs in the key, not the filter.
 
 ## Testing
 
@@ -165,11 +172,19 @@ Pattern A is what this project implements. **Pattern B is the production upgrade
 
 **Singular** — business rules that don't fit a column test:
 
-| Test                             | Intent                                          | State                                                              |
-| -------------------------------- | ----------------------------------------------- | ------------------------------------------------------------------ |
-| `assert_no_orphan_candidates`    | Every candidate appears in at least one system. | Working.                                                           |
-| `assert_customer_id_consistency` | No candidate spans multiple customers.          | **Inert** — see [issue 3](#3-the-alarm-for-issue-2-is-pointed-at-the-wrong-model). |
-| `assert_email_dedup_integrity`   | One email doesn't map to two candidate IDs.     | Needs tenant scoping — see [issue 9](#10-assert_email_dedup_integrity-needs-tenant-scoping). |
+| Test                              | Asserts                                                                                  |
+| --------------------------------- | ---------------------------------------------------------------------------------------- |
+| `assert_no_orphan_candidates`     | Every candidate appears in at least one system.                                          |
+| `assert_customer_id_consistency`  | No candidate spans multiple customers. Runs against the **unioned** model — against the deduped model it could never fail. |
+| `assert_email_dedup_integrity`    | Within a customer, one email maps to one candidate. Scoped by `customer_id`, since two customers can legitimately share `info@company.com`. |
+| `assert_dedup_preserves_non_null` | If any system supplied a value, the hub is not NULL for that field.                      |
+
+**Unit tests** — `_unit_tests.yml` runs fixtures without any warehouse data:
+
+| Unit test                                     | Asserts                                                                    |
+| --------------------------------------------- | ---------------------------------------------------------------------------- |
+| `dedup_keeps_most_recent_non_null`            | Coalescing reaches across the partition; the newest row's NULLs don't win.  |
+| `same_email_different_customers_stay_distinct` | The same address under two customers mints two keys.                       |
 
 ## Getting started
 
@@ -245,47 +260,29 @@ Also missing: any `.yml` for the staging layer, so `stg_*` models carry no tests
 
 ---
 
-## Tier 1 — correctness blockers
+## Fixed
 
-### 1. `candidate_id` is not a shared key
+| #   | Issue                                                                        | Resolution                                                                                                       |
+| --- | ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| 1   | `candidate_id` treated as a shared key, colliding unrelated people           | surrogate `candidate_sk` over `(customer_id, email)`; native ids moved to `int_candidate_system_bridge`           |
+| 2   | Dedup partition spanned tenants, mixing one customer's attributes into another's row | `customer_id` is an input to the key, so a partition structurally cannot span tenants                     |
+| 3   | `assert_customer_id_consistency` could never fail                            | repointed at `int_identity_unioned`, grouped by `candidate_sk`                                                   |
+| 4   | Most-recent-non-null windows were dead code                                  | explicit `UNBOUNDED FOLLOWING` frame, guarded by a unit-test fixture and `assert_dedup_preserves_non_null`        |
+| —   | `MAX()` over BOOLEAN, which Snowflake rejects                                | `BOOLOR_AGG`                                                                                                     |
+| —   | `stg_crm_candidates` missing `ats`, breaking the union                       | `CAST(NULL AS VARCHAR) AS ats`, and explicit casts on the other NULL branches for union type stability            |
 
-The union and dedup treat `candidate_id` as a global identifier. Appendix A of the brief defines it as a primary key *per system*, so CRM candidate 5, ATS candidate 5, and survey applicant 5 are three unrelated people. `PARTITION BY candidate_id` therefore **collides identities rather than unifying them**, and every downstream model inherits the error — the `is_in_*` flags and the presence bitmask become artifacts of overlapping ID ranges.
+> [!NOTE]
+> These are correct by construction and by `dbt parse`, **not by execution** — no model has yet run against a warehouse.
 
-**Fix:** mint a surrogate on `(customer_id, lower(trim(email)))` and partition on that; keep each system's native id in the bridge table.
+## Remaining
 
-### 2. The dedup merges across tenants
+### 5. `stg_ats_candidates` does not expose `job_id`
 
-`PARTITION BY candidate_id` contains no `customer_id`. The window merges rows belonging to different customers, and `WHERE rn = 1` stamps the surviving row with whichever `customer_id` sorted first. The result is a hub row carrying Customer A's `customer_id` alongside Customer B's department, recruiter, and hiring manager.
-
-`tenant_filter()` runs after this and cannot repair it — it filters on the winning `customer_id` and serves the other tenant's attribute values. This directly contradicts the requirement stated at the top of this README.
-
-**Fix:** include `customer_id` in the partition (it comes free with the issue 1 surrogate key).
-
-### 3. The alarm for issue 2 is pointed at the wrong model
-
-`assert_customer_id_consistency` groups `int_identity_deduped` by `candidate_id` — already unique in that model, so the count is always 1 and the test can never fail. This is not merely a dead test: it is the specific detector for issue 2, aimed at the one model where it is guaranteed to pass.
-
-**Fix:** repoint it at `int_identity_unioned`, where it fires immediately.
-
-### 4. Most-recent-non-null is dead code
-
-`FIRST_VALUE(... IGNORE NULLS) OVER (PARTITION BY ... ORDER BY ...)` defaults to a frame of `ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW`. Because the model then keeps `rn = 1` — the first row of that same ordering — every window sees only its own row. All six coalescing expressions are inert, and the model is equivalent to `QUALIFY ROW_NUMBER() = 1`. Nothing errors; the values are just quietly wrong.
-
-**Fix:** add `ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING`, and add a fixture whose newest row has a NULL in a field an older row fills, so the regression cannot hide again.
-
-### 5. Two compile errors and a boolean aggregate
-
-- **`stg_crm_candidates` has no `ats` column,** but `int_identity_unioned` selects one from it. The ATS branch handles this with `NULL AS ats`; the CRM branch needs the same.
-- **`stg_ats_candidates` does not expose `job_id`,** but `dim_candidate_attributes` joins on `ac.job_id`. Either select it through or drop that branch — the ATS staging model already carries `department_name` from its own join.
-- **`MAX()` over a boolean.** Snowflake's `MAX` rejects BOOLEAN. Use `BOOLOR_AGG(source_system = 'crm')`.
+`dim_candidate_attributes` joins on `ac.job_id`, which the staging model consumes internally and drops. The intended fix is to delete that branch rather than plumb the column through: `stg_ats_candidates` already carries `department_name` from its own join, so the re-join is redundant.
 
 ### 6. ATS recruiter data is silently dropped
 
 `stg_ats_candidates` carries `recruiters` as an array marked "flatten in the next step", but `int_identity_unioned` hardcodes `NULL AS recruiter` for the ATS branch. The flatten never happens.
-
----
-
-## Tier 2 — real problems
 
 ### 7. `dim_candidate_attributes` has no `customer_id`
 

@@ -1,0 +1,91 @@
+version: 2
+
+unit_tests:
+  # The regression fixture for the most-recent-non-null windows.
+  #
+  # The newest row (ats, June) is deliberately NULL for phone_number,
+  # hiring_manager and department_name, all of which the older CRM row fills.
+  # If the FIRST_VALUE frame is ever lost, each window collapses to its own row
+  # and these three come back NULL -- silently, with no error. This fixture
+  # turns that into a failing test.
+  - name: dedup_keeps_most_recent_non_null
+    model: int_identity_deduped
+    description: >
+      Per-field coalescing must reach across rows in the partition, not just
+      read the newest row.
+    given:
+      - input: ref('int_identity_unioned')
+        rows:
+          # Older CRM row: has phone, hiring manager, department.
+          - candidate_sk: "sk_alice"
+            source_candidate_id: 1
+            customer_id: 100
+            email: "alice@example.com"
+            phone_number: "+46701112233"
+            source_timestamp: "2024-01-15 09:00:00"
+            recruiter: null
+            hiring_manager: "Hanna"
+            department_name: "Sales"
+            ats: null
+            source_system: "crm"
+          # Newer ATS row: NULL for the three fields above, adds a recruiter.
+          - candidate_sk: "sk_alice"
+            source_candidate_id: 77
+            customer_id: 100
+            email: "alice@example.com"
+            phone_number: null
+            source_timestamp: "2024-06-01 09:00:00"
+            recruiter: "Rasmus"
+            hiring_manager: null
+            department_name: null
+            ats: null
+            source_system: "ats"
+    expect:
+      rows:
+        - candidate_sk: "sk_alice"
+          customer_id: 100
+          email: "alice@example.com"
+          phone_number: "+46701112233"   # from the OLDER row
+          hiring_manager: "Hanna"        # from the OLDER row
+          department_name: "Sales"       # from the OLDER row
+          recruiter: "Rasmus"            # from the newer row
+          is_in_crm: true
+          is_in_ats: true
+          is_in_srv: false
+
+  # Guards the tenant boundary: two customers reusing the same email must stay
+  # two candidates. Fails if customer_id is ever dropped from the surrogate key.
+  - name: same_email_different_customers_stay_distinct
+    model: int_identity_unioned
+    description: The same address under two customers must mint two keys.
+    given:
+      - input: ref('stg_crm_candidates')
+        rows:
+          - candidate_id: 1
+            customer_id: 100
+            email: "info@company.com"
+            phone_number: null
+            source_timestamp: "2024-01-01 09:00:00"
+            recruiter: null
+            hiring_manager: null
+            department_name: null
+            source_system: "crm"
+          - candidate_id: 2
+            customer_id: 200
+            email: "info@company.com"
+            phone_number: null
+            source_timestamp: "2024-01-01 09:00:00"
+            recruiter: null
+            hiring_manager: null
+            department_name: null
+            source_system: "crm"
+      - input: ref('stg_ats_candidates')
+        rows: []
+      - input: ref('stg_srv_applicants')
+        rows: []
+    expect:
+      rows:
+        - source_candidate_id: 1
+          customer_id: 100
+        - source_candidate_id: 2
+          customer_id: 200
