@@ -2,9 +2,17 @@ version: 2
 
 models:
   - name: int_identity_unioned
-    description: Union of all three staging models. One row per candidate per system.
+    description: >
+      Union of all three staging models. One row per candidate per system,
+      with the minted identity key candidate_sk attached.
     columns:
-      - name: candidate_id
+      - name: candidate_sk
+        description: >
+          Surrogate identity key over (customer_id, email), falling back to the
+          native per-system id when email is null. Stable across systems.
+        tests: [not_null]
+      - name: source_candidate_id
+        description: The candidate's native primary key within its own system.
         tests: [not_null]
       - name: customer_id
         tests: [not_null]
@@ -16,15 +24,27 @@ models:
 
   - name: int_identity_deduped
     description: >
-      Deduplicated to one row per candidate. Uses most-recent-non-null
-      conflict resolution. System flags indicate which products the
+      Deduplicated to one row per candidate_sk. Uses most-recent-non-null
+      conflict resolution per field. System flags indicate which products the
       candidate appears in.
     columns:
-      - name: candidate_id
+      - name: candidate_sk
         tests: [unique, not_null]
       - name: email
         tests:
           - not_null
           - email_format
+      - name: customer_id
+        tests: [not_null]
+
+  - name: int_candidate_system_bridge
+    description: >
+      Many-to-many bridge from candidate_sk to each system's native id and
+      customer. Preserves mappings the identity hub collapses.
+    columns:
+      - name: candidate_sk
+        tests: [not_null]
+      - name: source_candidate_id
+        tests: [not_null]
       - name: customer_id
         tests: [not_null]

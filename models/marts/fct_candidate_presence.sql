@@ -1,6 +1,6 @@
 -- models/marts/fct_candidate_presence.sql
 SELECT
-    candidate_id,
+    candidate_sk,
     customer_id,
     department_name,
     is_in_crm,

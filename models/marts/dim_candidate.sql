@@ -3,7 +3,7 @@
     config(
         materialized = 'table',
         indexes = [
-            {'columns': ['candidate_id'], 'unique': True},
+            {'columns': ['candidate_sk'], 'unique': True},
             {'columns': ['email']},
             {'columns': ['customer_id']},
             {'columns': ['hiring_manager']},
@@ -12,8 +12,10 @@
     )
 }}
 
+-- candidate_sk is the identity key. Native per-system candidate ids live in
+-- int_candidate_system_bridge.
 SELECT
-    candidate_id,
+    candidate_sk,
     customer_id,
     email,
     phone_number,

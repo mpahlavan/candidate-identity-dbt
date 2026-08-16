@@ -1,9 +1,11 @@
 -- models/intermediate/int_candidate_system_bridge.sql
--- Preserves the full candidate-to-customer mapping. The identity hub picks a
--- single customer_id per candidate; this bridge keeps every pairing so that
--- multi-customer candidates (e.g. staffing agency records) are not lost.
+-- The home for each system's native candidate_id, which the identity hub drops.
+-- Also preserves the full candidate-to-customer mapping, so a candidate that
+-- legitimately spans customers (e.g. a staffing agency record) is not lost when
+-- the hub collapses to one row per candidate_sk.
 SELECT DISTINCT
-    candidate_id,
+    candidate_sk,
+    source_candidate_id,
     customer_id,
     source_system,
     source_timestamp
