@@ -39,7 +39,7 @@ WITH unioned AS (
         email,
         phone_number,
         source_timestamp,
-        CAST(NULL AS VARCHAR)           AS recruiter,
+        recruiter,
         hiring_manager,
         department_name,
         CAST(NULL AS VARCHAR)           AS ats,

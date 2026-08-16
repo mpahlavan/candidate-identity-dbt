@@ -1,0 +1,60 @@
+version: 2
+
+models:
+  - name: stg_crm_candidates
+    description: "CRM candidates, normalized. Grain: one row per CRM candidate."
+    columns:
+      - name: candidate_id
+        description: Native CRM primary key. Not comparable across systems.
+        tests: [unique, not_null]
+      - name: customer_id
+        tests: [not_null]
+      - name: email
+        tests:
+          - not_null
+          - email_format
+      - name: source_system
+        tests: [not_null]
+
+  - name: stg_ats_candidates
+    description: >
+      ATS candidates enriched with their job's customer, department, hiring
+      manager and recruiters. Grain: one row per ATS candidate — job_id is
+      unique in stg_ats_jobs, so the join does not fan out.
+    columns:
+      - name: candidate_id
+        description: Native ATS primary key. Not comparable across systems.
+        tests: [unique, not_null]
+      - name: job_id
+        tests:
+          - not_null
+          - relationships:
+              to: ref('stg_ats_jobs')
+              field: job_id
+      - name: email
+        tests: [email_format]
+      - name: source_system
+        tests: [not_null]
+
+  - name: stg_ats_jobs
+    description: "ATS jobs. Grain: one row per job."
+    columns:
+      - name: job_id
+        tests: [unique, not_null]
+      - name: customer_id
+        tests: [not_null]
+
+  - name: stg_srv_applicants
+    description: >
+      Survey applicants with hiring manager, recruiter and department lifted
+      out of the JSON tags blob. Grain: one row per survey applicant.
+    columns:
+      - name: candidate_id
+        description: Native survey primary key. Not comparable across systems.
+        tests: [unique, not_null]
+      - name: customer_id
+        tests: [not_null]
+      - name: email
+        tests: [email_format]
+      - name: source_system
+        tests: [not_null]

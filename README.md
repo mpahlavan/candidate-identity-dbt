@@ -256,8 +256,6 @@ Required deliverables still empty (0 bytes):
 - **`macros/dedup_helpers.sql`** — the dedup windows are written inline in `int_identity_deduped.sql` and belong here.
 - **`snapshots/dim_candidate_snapshot.sql`** — SCD Type 2 history. Should snapshot `dim_candidate`, not the ephemeral intermediate model.
 
-Also missing: any `.yml` for the staging layer, so `stg_*` models carry no tests or documentation.
-
 ---
 
 ## Fixed
@@ -270,19 +268,16 @@ Also missing: any `.yml` for the staging layer, so `stg_*` models carry no tests
 | 4   | Most-recent-non-null windows were dead code                                  | explicit `UNBOUNDED FOLLOWING` frame, guarded by a unit-test fixture and `assert_dedup_preserves_non_null`        |
 | —   | `MAX()` over BOOLEAN, which Snowflake rejects                                | `BOOLOR_AGG`                                                                                                     |
 | —   | `stg_crm_candidates` missing `ats`, breaking the union                       | `CAST(NULL AS VARCHAR) AS ats`, and explicit casts on the other NULL branches for union type stability            |
+| 5   | `stg_ats_candidates` did not expose `job_id`                                 | `job_id` selected through, with a `relationships` test back to `stg_ats_jobs`                                    |
+| 6   | ATS recruiter data silently dropped                                          | `recruiters[0]` feeds the hub's scalar `recruiter`; the full array stays for the multi-valued attributes table    |
+| 10  | `assert_email_dedup_integrity` grouped emails globally                       | grouped by `(customer_id, email)`                                                                                |
+| 11  | `stg_ats_candidates` bypassed `stg_ats_jobs`                                 | joins `ref('stg_ats_jobs')`, so one cleaning path serves every consumer                                          |
+| —   | staging layer had no schema file                                             | `_staging.yml` documents all four models and adds key, FK and email-format tests                                  |
 
 > [!NOTE]
 > These are correct by construction and by `dbt parse`, **not by execution** — no model has yet run against a warehouse.
 
 ## Remaining
-
-### 5. `stg_ats_candidates` does not expose `job_id`
-
-`dim_candidate_attributes` joins on `ac.job_id`, which the staging model consumes internally and drops. The intended fix is to delete that branch rather than plumb the column through: `stg_ats_candidates` already carries `department_name` from its own join, so the re-join is redundant.
-
-### 6. ATS recruiter data is silently dropped
-
-`stg_ats_candidates` carries `recruiters` as an array marked "flatten in the next step", but `int_identity_unioned` hardcodes `NULL AS recruiter` for the ATS branch. The flatten never happens.
 
 ### 7. `dim_candidate_attributes` has no `customer_id`
 
@@ -299,14 +294,6 @@ The CRM and ATS branches emit `attribute_name = 'department_name'`. The survey b
 `LATERAL FLATTEN(input => tags)` over `{"Department": ["Sales"]}` yields `f.value = ["Sales"]` — a VARIANT array. The CRM and ATS branches emit plain VARCHAR. Unioned, the column becomes VARIANT with inconsistent shapes.
 
 **Fix:** either cast `f.value[0]::VARCHAR`, or flatten twice and emit one row per array element — the latter is better, since a candidate with two recruiters keeps both.
-
-### 10. `assert_email_dedup_integrity` needs tenant scoping
-
-It groups by `email` globally. Two different people at two different customers sharing `info@company.com` is legitimate in a multi-tenant warehouse, and this test reports it as corruption. Group by `(customer_id, email)`.
-
-### 11. `stg_ats_candidates` bypasses `stg_ats_jobs`
-
-It joins `source('raw', 'ats_jobs')` directly while `dim_candidate_attributes` joins `ref('stg_ats_jobs')`. Two paths to the same data means a cleaning rule added to the staging model reaches one consumer and not the other. Point both at `ref()`.
 
 ### 12. The `indexes` config is inert on Snowflake
 
