@@ -1,6 +1,6 @@
-# Jobylon DataForge — Unified Candidate Identity
+# Candidate Identity Resolution (dbt + Snowflake)
 
-A dbt project that resolves candidate identity across three separate Jobylon products — CRM, ATS, and Survey — into a single analytics surface.
+A dbt project that resolves candidate identity across three separate products of a recruiting platform — CRM, ATS, and Survey — into a single analytics surface.
 
 > [!IMPORTANT]
 > **Status: identity resolution and the attributes table are rebuilt. The project has not yet been run against a warehouse.**
@@ -208,6 +208,8 @@ dbt debug                 # confirms the connection before you build
 
 The account identifier is in Snowsight under **Account → View account details** (format `ORGNAME-ACCOUNTNAME`). Role, warehouse, database, and schema default to what a fresh trial provides.
 
+**No warehouse yet?** `dbt deps && dbt parse` checks the whole project (models, tests, unit tests, refs) without connecting; set the three required variables to any value first. CI runs exactly this on every push.
+
 **3. Build:**
 
 ```bash
@@ -227,7 +229,7 @@ dbt build --vars '{"tenant_id": 123}'
 ```
 .
 ├── dbt_project.yml
-├── packages.yml                      # dbt_utils, dbt_expectations
+├── packages.yml                      # dbt_utils
 ├── package-lock.yml                  # pinned package versions (committed)
 ├── profiles.yml                      # env-var based; safe to commit
 ├── requirements.txt                  # dbt-core + dbt-snowflake

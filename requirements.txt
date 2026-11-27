@@ -1,4 +1,4 @@
-# Jobylon DataForge — Python dependencies
+# Candidate identity resolution (dbt) — Python dependencies
 #
 # Install into a virtual environment:
 #   python -m venv .venv && source .venv/bin/activate
